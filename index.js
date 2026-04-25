@@ -107,6 +107,8 @@ app.get("/webhook", (req, res) => {
 });
 
 app.post("/webhook", (req, res) => {
+  console.log("WEBHOOK BODY:", JSON.stringify(req.body, null, 2));
+
   res.sendStatus(200);
 
   processWebhookPayload(req.body).catch((error) => {
