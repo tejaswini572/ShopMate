@@ -1,0 +1,2 @@
+-- ShopMate MVP seed placeholder.
+-- Demo seed data will be added when the schema is finalized.
