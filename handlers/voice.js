@@ -3,7 +3,7 @@ const path = require("path");
 
 const { downloadWhatsAppMedia } = require("../services/metaMedia");
 const { transcribeAudioFile, parseSalesFromTranscript } = require("../services/openai");
-const { updateStock } = require("../services/supabase");
+const { suggestProductMatches, updateStock } = require("../services/supabase");
 const { generateBillImage } = require("../services/billImage");
 const { sendWhatsApp, uploadWhatsAppMedia, sendWhatsAppImage } = require("../services/whatsapp");
 const { buildConfirmationMessage } = require("./salesReply");
@@ -116,7 +116,12 @@ async function handleVoiceMessage(from, mediaId) {
       return;
     }
 
-    await sendWhatsApp(from, buildConfirmationMessage(results));
+    const unknownNames = results
+      .filter((item) => item.error === "not found")
+      .map((item) => item.name);
+    const suggestions = unknownNames.length > 0 ? await suggestProductMatches(unknownNames) : [];
+
+    await sendWhatsApp(from, buildConfirmationMessage(results, suggestions));
     await sendBillImageIfPossible(from, results);
   } catch (error) {
     console.error("[voice] Voice message handling failed:", error.message);

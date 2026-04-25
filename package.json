@@ -6,6 +6,7 @@
     "dev": "nodemon index.js",
     "start": "node index.js",
     "test:local": "node scripts/test-local-flow.js",
+    "test:suggestions": "node scripts/test-suggestions.js",
     "test:whatsapp": "node scripts/test-whatsapp.js",
     "reset:demo": "node scripts/reset-demo.js"
   },

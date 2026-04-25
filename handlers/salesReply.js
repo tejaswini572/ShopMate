@@ -24,11 +24,13 @@ function buildUpdatedItemLine(item) {
   return `- ${item.name}: sold ${sold} \u2192 ${item.newQty} left`;
 }
 
-function buildConfirmationMessage(results) {
+function buildConfirmationMessage(results, suggestions) {
   const stockResults = Array.isArray(results) ? results : [];
   const updated = stockResults.filter((item) => !item.error);
   const notFound = stockResults.filter((item) => item.error === "not found");
   const lowStock = updated.filter((item) => Number(item.newQty) <= Number(item.minStock));
+  const suggestionList = Array.isArray(suggestions) ? suggestions : [];
+  const suggestionMap = new Map(suggestionList.map((item) => [item.input, item.suggestion]));
 
   let billTotal = 0;
   let hasBillableItems = false;
@@ -63,6 +65,14 @@ function buildConfirmationMessage(results) {
 
     for (const item of notFound) {
       lines.push(`- ${item.name}`);
+    }
+
+    lines.push("");
+    lines.push("Possible matches:");
+
+    for (const item of notFound) {
+      const suggestion = suggestionMap.get(item.name);
+      lines.push(`- ${item.name} \u2192 ${suggestion || "no close match found"}`);
     }
   }
 

@@ -1,12 +1,13 @@
 const fs = require("fs");
 const { parseSalesFromTranscript } = require("../services/openai");
-const { getAllStock, getLowStockItems, updateStock } = require("../services/supabase");
+const { getAllStock, getLowStockItems, suggestProductMatches, updateStock } = require("../services/supabase");
 const { generateBillImage } = require("../services/billImage");
 const { sendWhatsApp, uploadWhatsAppMedia, sendWhatsAppImage } = require("../services/whatsapp");
 const { handleSummaryMessage } = require("./summary");
 const { buildConfirmationMessage } = require("./salesReply");
 
 const HELP_TEXT = "Send a voice note or text like: 3 soap, 5 Pepsi sold. Send ? for summary.";
+const SUGGESTION_SKIP_TERMS = ["?", "summary", "stock", "low", "order", "help"];
 
 function normalizeText(text) {
   return String(text || "").trim();
@@ -35,6 +36,27 @@ function buildLowStockList(items) {
   return [
     "\u26A0\uFE0F Low Stock",
     ...lowStockItems.map((item) => `\u00B7 ${item.name}: ${item.quantity} left`),
+  ].join("\n");
+}
+
+function looksLikeProductQuery(message) {
+  if (!message || message.length < 3 || !/[a-z]/i.test(message)) {
+    return false;
+  }
+
+  const lowerMessage = message.toLowerCase();
+  return !SUGGESTION_SKIP_TERMS.some((term) => lowerMessage.includes(term));
+}
+
+function buildProductSuggestionMessage(input, suggestion) {
+  return [
+    "I could not find a quantity, but this looks like a product.",
+    "",
+    "Possible match:",
+    `- ${input} \u2192 ${suggestion}`,
+    "",
+    `Try sending:`,
+    `"1 ${suggestion} sold"`,
   ].join("\n");
 }
 
@@ -136,6 +158,15 @@ async function handleTextMessage(from, text) {
     const parsed = await parseSalesFromTranscript(message);
 
     if (!parsed || !Array.isArray(parsed.items) || parsed.items.length === 0) {
+      if (looksLikeProductQuery(message)) {
+        const suggestions = await suggestProductMatches([message]);
+        const suggestion = suggestions[0]?.suggestion;
+
+        if (suggestion) {
+          return sendWhatsApp(from, buildProductSuggestionMessage(message, suggestion));
+        }
+      }
+
       return sendWhatsApp(from, HELP_TEXT);
     }
 
@@ -145,7 +176,12 @@ async function handleTextMessage(from, text) {
       return sendWhatsApp(from, "I found the sale, but couldn't update stock right now.");
     }
 
-    const reply = await sendWhatsApp(from, buildConfirmationMessage(results));
+    const unknownNames = results
+      .filter((item) => item.error === "not found")
+      .map((item) => item.name);
+    const suggestions = unknownNames.length > 0 ? await suggestProductMatches(unknownNames) : [];
+
+    const reply = await sendWhatsApp(from, buildConfirmationMessage(results, suggestions));
     await sendBillImageIfPossible(from, results);
     return reply;
   } catch (error) {

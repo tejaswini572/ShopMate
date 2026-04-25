@@ -58,8 +58,120 @@ function normalizeName(value) {
   return String(value || "").trim().toLowerCase();
 }
 
+function normalizeProductName(value) {
+  return normalizeName(value)
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function escapeLike(value) {
   return value.replace(/[%_]/g, "\\$&");
+}
+
+function levenshteinDistance(a, b) {
+  const left = String(a || "");
+  const right = String(b || "");
+
+  if (left === right) {
+    return 0;
+  }
+
+  if (!left) {
+    return right.length;
+  }
+
+  if (!right) {
+    return left.length;
+  }
+
+  const matrix = Array.from({ length: left.length + 1 }, () => new Array(right.length + 1).fill(0));
+
+  for (let i = 0; i <= left.length; i += 1) {
+    matrix[i][0] = i;
+  }
+
+  for (let j = 0; j <= right.length; j += 1) {
+    matrix[0][j] = j;
+  }
+
+  for (let i = 1; i <= left.length; i += 1) {
+    for (let j = 1; j <= right.length; j += 1) {
+      const cost = left[i - 1] === right[j - 1] ? 0 : 1;
+      matrix[i][j] = Math.min(
+        matrix[i - 1][j] + 1,
+        matrix[i][j - 1] + 1,
+        matrix[i - 1][j - 1] + cost
+      );
+    }
+  }
+
+  return matrix[left.length][right.length];
+}
+
+function tokenizeName(value) {
+  return normalizeProductName(value)
+    .split(" ")
+    .filter(Boolean);
+}
+
+function getTokenOverlapScore(inputName, productName) {
+  const inputTokens = tokenizeName(inputName);
+  const productTokens = tokenizeName(productName);
+
+  if (inputTokens.length === 0 || productTokens.length === 0) {
+    return 0;
+  }
+
+  const productTokenSet = new Set(productTokens);
+  let overlapCount = 0;
+
+  for (const token of inputTokens) {
+    if (productTokenSet.has(token)) {
+      overlapCount += 1;
+    }
+  }
+
+  return overlapCount / Math.max(inputTokens.length, productTokens.length);
+}
+
+function getSimilarityScore(inputName, productName) {
+  const normalizedInput = normalizeProductName(inputName);
+  const normalizedProduct = normalizeProductName(productName);
+
+  if (!normalizedInput || !normalizedProduct) {
+    return 0;
+  }
+
+  if (normalizedInput === normalizedProduct) {
+    return 1;
+  }
+
+  let score = 0;
+
+  if (
+    normalizedProduct.includes(normalizedInput) ||
+    normalizedInput.includes(normalizedProduct)
+  ) {
+    score = Math.max(score, 0.9);
+  }
+
+  const tokenScore = getTokenOverlapScore(normalizedInput, normalizedProduct);
+  score = Math.max(score, tokenScore * 0.75);
+
+  const distance = levenshteinDistance(normalizedInput, normalizedProduct);
+  const maxLength = Math.max(normalizedInput.length, normalizedProduct.length);
+  const levenshteinScore = maxLength > 0 ? 1 - distance / maxLength : 0;
+  score = Math.max(score, levenshteinScore);
+
+  const inputCompact = normalizedInput.replace(/\s+/g, "");
+  const productCompact = normalizedProduct.replace(/\s+/g, "");
+  const compactDistance = levenshteinDistance(inputCompact, productCompact);
+  const compactLength = Math.max(inputCompact.length, productCompact.length);
+  const compactScore = compactLength > 0 ? 1 - compactDistance / compactLength : 0;
+  score = Math.max(score, compactScore);
+
+  return score;
 }
 
 function getTodayBounds() {
@@ -90,6 +202,53 @@ async function getAllStock() {
   }
 
   return data || [];
+}
+
+async function suggestProductMatches(unknownNames) {
+  const names = Array.isArray(unknownNames) ? unknownNames : [];
+
+  if (names.length === 0) {
+    return [];
+  }
+
+  console.log(`Product suggestion requested for: ${names.join(", ")}`);
+
+  const stockItems = await getAllStock();
+  const candidateItems = Array.isArray(stockItems) && stockItems.length > 0
+    ? stockItems
+    : DEMO_PRODUCTS;
+  if (!Array.isArray(candidateItems) || candidateItems.length === 0) {
+    return names.map((input) => ({
+      input,
+      suggestion: null,
+    }));
+  }
+
+  const results = names.map((input) => {
+    let bestSuggestion = null;
+    let bestScore = 0;
+
+    for (const stockItem of candidateItems) {
+      const candidateName = String(stockItem?.name || "").trim();
+      const score = getSimilarityScore(input, candidateName);
+
+      if (score > bestScore) {
+        bestScore = score;
+        bestSuggestion = candidateName;
+      }
+    }
+
+    return {
+      input,
+      suggestion: bestScore >= 0.45 ? bestSuggestion : null,
+    };
+  });
+
+  for (const item of results) {
+    console.log(`Product suggestion result: ${item.input} -> ${item.suggestion || "no close match found"}`);
+  }
+
+  return results;
 }
 
 async function findProductByName(name) {
@@ -338,6 +497,7 @@ async function getStockSummary() {
 module.exports = {
   getAllStock,
   findProductByName,
+  suggestProductMatches,
   updateStock,
   getLowStockItems,
   getTodaySalesSummary,
