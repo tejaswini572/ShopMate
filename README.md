@@ -56,6 +56,36 @@ https://YOUR_NGROK_URL/webhook
 shopmate123
 ```
 
+## ngrok + Meta Webhook Setup On Windows
+
+Start the server in PowerShell:
+
+```powershell
+npm run dev
+```
+
+Open another PowerShell window and start ngrok:
+
+```powershell
+ngrok http 3000
+```
+
+Copy the HTTPS forwarding URL.
+
+In Meta Developer Dashboard:
+
+- Go to WhatsApp configuration
+- Callback URL:
+
+```text
+https://YOUR_NGROK_URL/webhook
+```
+
+- Verify token: same as `WEBHOOK_VERIFY_TOKEN` in `.env`
+- Subscribe to `messages` webhook field
+
+Important: if ngrok restarts, the URL changes. Update the Meta webhook URL again.
+
 ## Local Test
 
 ```powershell
