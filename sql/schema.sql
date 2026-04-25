@@ -1,0 +1,2 @@
+-- ShopMate MVP schema placeholder.
+-- Business tables will be added when stock update logic is implemented.
