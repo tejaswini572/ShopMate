@@ -5,38 +5,7 @@ const { downloadWhatsAppMedia } = require("../services/metaMedia");
 const { transcribeAudioFile, parseSalesFromTranscript } = require("../services/openai");
 const { updateStock } = require("../services/supabase");
 const { sendWhatsApp } = require("../services/whatsapp");
-
-function buildConfirmationMessage(results) {
-  const updated = results.filter((item) => !item.error);
-  const notFound = results.filter((item) => item.error === "not found");
-  const lowStock = updated.filter((item) => Number(item.newQty) <= Number(item.minStock));
-
-  const lines = ["✅ Stock updated!"];
-
-  for (const item of updated) {
-    lines.push(`· ${item.name}: sold ${item.sold} → ${item.newQty} left`);
-  }
-
-  if (notFound.length > 0) {
-    lines.push("");
-    lines.push("Could not find:");
-
-    for (const item of notFound) {
-      lines.push(`· ${item.name}`);
-    }
-  }
-
-  if (lowStock.length > 0) {
-    lines.push("");
-    lines.push("⚠️ Running low:");
-
-    for (const item of lowStock) {
-      lines.push(`· ${item.name}: only ${item.newQty} left`);
-    }
-  }
-
-  return lines.join("\n");
-}
+const { buildConfirmationMessage } = require("./salesReply");
 
 async function removeFileIfPossible(filePath) {
   if (!filePath) {
@@ -65,12 +34,12 @@ async function handleVoiceMessage(from, mediaId) {
       transcript = await transcribeAudioFile(filePath);
     } catch (error) {
       console.error("[voice] Transcription failed:", error.message);
-      await sendWhatsApp(from, "❌ Couldn't hear that clearly. Please send again.");
+      await sendWhatsApp(from, "\u274C Couldn't hear that clearly. Please send again.");
       return;
     }
 
     if (!transcript) {
-      await sendWhatsApp(from, "❌ Couldn't hear that clearly. Please send again.");
+      await sendWhatsApp(from, "\u274C Couldn't hear that clearly. Please send again.");
       return;
     }
 

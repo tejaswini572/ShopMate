@@ -146,9 +146,9 @@ async function updateStock(items) {
 
   for (const item of items) {
     const name = String(item?.name || "").trim();
-    const qty = Number(item?.qty);
+    const requestedQty = Number(item?.qty);
 
-    if (!name || !Number.isFinite(qty) || qty <= 0) {
+    if (!name || !Number.isFinite(requestedQty) || requestedQty <= 0) {
       results.push({
         name: item?.name || "",
         sold: item?.qty || 0,
@@ -162,48 +162,52 @@ async function updateStock(items) {
     if (!product) {
       results.push({
         name,
-        sold: qty,
+        sold: requestedQty,
         error: "not found",
       });
       continue;
     }
 
     const oldQty = Number(product.quantity || 0);
-    const newQty = Math.max(0, oldQty - qty);
+    const soldQty = Math.min(oldQty, requestedQty);
+    const newQty = oldQty - soldQty;
 
-    const { error: updateError } = await supabase
-      .from("stock")
-      .update({
-        quantity: newQty,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", product.id);
+    if (soldQty > 0) {
+      const { error: updateError } = await supabase
+        .from("stock")
+        .update({
+          quantity: newQty,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", product.id);
 
-    if (updateError) {
-      console.error(`[supabase] Failed to update stock for ${product.name}:`, updateError.message);
-      results.push({
-        name: product.name,
-        sold: qty,
-        error: "update failed",
-      });
-      continue;
-    }
+      if (updateError) {
+        console.error(`[supabase] Failed to update stock for ${product.name}:`, updateError.message);
+        results.push({
+          name: product.name,
+          sold: soldQty,
+          error: "update failed",
+        });
+        continue;
+      }
 
-    const { error: salesLogError } = await supabase
-      .from("sales_log")
-      .insert({
-        product_name: product.name,
-        qty_sold: qty,
-        sell_price: product.sell_price,
-      });
+      const { error: salesLogError } = await supabase
+        .from("sales_log")
+        .insert({
+          product_name: product.name,
+          qty_sold: soldQty,
+          sell_price: product.sell_price,
+        });
 
-    if (salesLogError) {
-      console.error(`[supabase] Failed to insert sales log for ${product.name}:`, salesLogError.message);
+      if (salesLogError) {
+        console.error(`[supabase] Failed to insert sales log for ${product.name}:`, salesLogError.message);
+      }
     }
 
     results.push({
       name: product.name,
-      sold: qty,
+      sold: soldQty,
+      requestedQty,
       oldQty,
       newQty,
       minStock: Number(product.min_stock || 0),

@@ -2,6 +2,7 @@ const { parseSalesFromTranscript } = require("../services/openai");
 const { getAllStock, getLowStockItems, updateStock } = require("../services/supabase");
 const { sendWhatsApp } = require("../services/whatsapp");
 const { handleSummaryMessage } = require("./summary");
+const { buildConfirmationMessage } = require("./salesReply");
 
 const HELP_TEXT = "Send a voice note or text like: 3 soap, 5 Pepsi sold. Send ? for summary.";
 
@@ -18,7 +19,7 @@ function buildStockList(items) {
 
   return [
     "Current Stock",
-    ...stockItems.map((item) => `· ${item.name}: ${item.quantity}`),
+    ...stockItems.map((item) => `\u00B7 ${item.name}: ${item.quantity}`),
   ].join("\n");
 }
 
@@ -26,46 +27,13 @@ function buildLowStockList(items) {
   const lowStockItems = Array.isArray(items) ? items : [];
 
   if (lowStockItems.length === 0) {
-    return "✅ No low-stock items.";
+    return "\u2705 No low-stock items.";
   }
 
   return [
-    "⚠️ Low Stock",
-    ...lowStockItems.map((item) => `· ${item.name}: ${item.quantity} left`),
+    "\u26A0\uFE0F Low Stock",
+    ...lowStockItems.map((item) => `\u00B7 ${item.name}: ${item.quantity} left`),
   ].join("\n");
-}
-
-function buildConfirmationMessage(results) {
-  const stockResults = Array.isArray(results) ? results : [];
-  const updated = stockResults.filter((item) => !item.error);
-  const notFound = stockResults.filter((item) => item.error === "not found");
-  const lowStock = updated.filter((item) => Number(item.newQty) <= Number(item.minStock));
-
-  const lines = ["✅ Stock updated!"];
-
-  for (const item of updated) {
-    lines.push(`· ${item.name}: sold ${item.sold} → ${item.newQty} left`);
-  }
-
-  if (notFound.length > 0) {
-    lines.push("");
-    lines.push("Could not find:");
-
-    for (const item of notFound) {
-      lines.push(`· ${item.name}`);
-    }
-  }
-
-  if (lowStock.length > 0) {
-    lines.push("");
-    lines.push("⚠️ Running low:");
-
-    for (const item of lowStock) {
-      lines.push(`· ${item.name}: only ${item.newQty} left`);
-    }
-  }
-
-  return lines.join("\n");
 }
 
 async function handleTextMessage(from, text) {
