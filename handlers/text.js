@@ -1,13 +1,78 @@
 const fs = require("fs");
 const { parseSalesFromTranscript } = require("../services/openai");
-const { getAllStock, getLowStockItems, suggestProductMatches, updateStock } = require("../services/supabase");
+const { getAllStock, getLowStockItems, suggestProductMatches, undoLastSale, updateStock } = require("../services/supabase");
 const { generateBillImage } = require("../services/billImage");
 const { sendWhatsApp, uploadWhatsAppMedia, sendWhatsAppImage } = require("../services/whatsapp");
 const { handleSummaryMessage } = require("./summary");
+const { formatBilingual, formatBilingualSections } = require("./bilingual");
 const { buildConfirmationMessage } = require("./salesReply");
 
-const HELP_TEXT = "Send a voice note or text like: 3 soap, 5 Pepsi sold. Send ? for summary.";
+const HELP_TEXT = formatBilingualSections(
+  [
+    "ShopMate Help",
+    "",
+    "Send sales:",
+    '"2 soap, 1 notebook sold"',
+    "",
+    "Commands:",
+    "? = today summary",
+    "stock = current stock",
+    "low = low-stock list",
+    "order = supplier order suggestion",
+    "help = show this menu",
+  ],
+  [
+    "ShopMate സഹായം",
+    "",
+    "വിൽപ്പന അയക്കുക:",
+    '"2 soap, 1 notebook sold"',
+    "",
+    "കമാൻഡുകൾ:",
+    "? = ഇന്നത്തെ സംഗ്രഹം",
+    "stock = നിലവിലെ സ്റ്റോക്ക്",
+    "low = സ്റ്റോക്ക് കുറവുള്ളവ",
+    "order = വാങ്ങേണ്ട സാധനങ്ങൾ",
+    "help = സഹായം കാണിക്കുക",
+  ]
+);
 const SUGGESTION_SKIP_TERMS = ["?", "summary", "stock", "low", "order", "help"];
+
+function isUndoCommand(message) {
+  const normalized = String(message || "").trim().toLowerCase();
+  return (
+    normalized === "undo" ||
+    normalized.includes("undo last") ||
+    normalized.includes("reverse last") ||
+    normalized.includes("\u0d24\u0d3f\u0d30\u0d41\u0d24\u0d4d\u0d24\u0d41") ||
+    normalized.includes("undo cheyyu")
+  );
+}
+
+function buildUndoMessage(result) {
+  if (!result?.ok) {
+    return formatBilingual(
+      "Nothing to undo.",
+      "\u0d24\u0d3f\u0d30\u0d41\u0d24\u0d4d\u0d24\u0d3e\u0d7b \u0d35\u0d3f\u0d7d\u0d2a\u0d4d\u0d2a\u0d28 \u0d12\u0d28\u0d4d\u0d28\u0d41\u0d2e\u0d3f\u0d32\u0d4d\u0d32."
+    );
+  }
+
+  const restoredItems = Array.isArray(result.restored) ? result.restored : [];
+  const enLines = ["\u21A9\uFE0F Last sale reversed!", "", "Restored:"];
+  const mlLines = ["\u21A9\uFE0F \u0d05\u0d35\u0d38\u0d3e\u0d28 \u0d35\u0d3f\u0d7d\u0d2a\u0d4d\u0d2a\u0d28 \u0d24\u0d3f\u0d30\u0d41\u0d24\u0d4d\u0d24\u0d3f!", "", "\u0d24\u0d3f\u0d30\u0d3f\u0d15\u0d46 \u0d1a\u0d47\u0d7c\u0d24\u0d4d\u0d24\u0d24\u0d4d:"];
+
+  for (const item of restoredItems) {
+    if (item?.error) {
+      enLines.push(`- ${item.name}: could not restore`);
+      mlLines.push(`- ${item.name}: \u0d24\u0d3f\u0d30\u0d3f\u0d15\u0d46 \u0d1a\u0d47\u0d7c\u0d15\u0d4d\u0d15\u0d3e\u0d28\u0d3e\u0d2f\u0d3f\u0d32\u0d4d\u0d32`);
+      continue;
+    }
+
+    enLines.push(`- ${item.name}: +${item.restored} \u2192 ${item.newQty} now`);
+    mlLines.push(`- ${item.name}: +${item.restored} \u2192 \u0d07\u0d2a\u0d4d\u0d2a\u0d4b\u0d7e ${item.newQty}`);
+  }
+
+  return formatBilingualSections(enLines, mlLines);
+}
 
 function normalizeText(text) {
   return String(text || "").trim();
@@ -17,26 +82,63 @@ function buildStockList(items) {
   const stockItems = Array.isArray(items) ? items : [];
 
   if (stockItems.length === 0) {
-    return "Current Stock\nNo stock items found.";
+    return formatBilingualSections(
+      ["Current Stock", "No stock items found."],
+      ["നിലവിലെ സ്റ്റോക്ക്", "സ്റ്റോക്ക് സാധനങ്ങളില്ല."]
+    );
   }
 
-  return [
-    "Current Stock",
-    ...stockItems.map((item) => `\u00B7 ${item.name}: ${item.quantity}`),
-  ].join("\n");
+  const enLines = ["Current Stock"];
+  const mlLines = ["നിലവിലെ സ്റ്റോക്ക്"];
+
+  for (const item of stockItems) {
+    enLines.push(`- ${item.name}: ${item.quantity}`);
+    mlLines.push(`- ${item.name}: ${item.quantity}`);
+  }
+
+  return formatBilingualSections(enLines, mlLines);
 }
 
 function buildLowStockList(items) {
   const lowStockItems = Array.isArray(items) ? items : [];
 
   if (lowStockItems.length === 0) {
-    return "\u2705 No low-stock items.";
+    return formatBilingual("✅ No low-stock items.", "✅ സ്റ്റോക്ക് കുറവുള്ള സാധനങ്ങളില്ല.");
   }
 
-  return [
-    "\u26A0\uFE0F Low Stock",
-    ...lowStockItems.map((item) => `\u00B7 ${item.name}: ${item.quantity} left`),
-  ].join("\n");
+  const enLines = ["⚠️ Running low:"];
+  const mlLines = ["⚠️ സ്റ്റോക്ക് കുറവാണ്:"];
+
+  for (const item of lowStockItems) {
+    enLines.push(`- ${item.name}: ${item.quantity} left`);
+    mlLines.push(`- ${item.name}: ${item.quantity} ബാക്കി`);
+  }
+
+  return formatBilingualSections(enLines, mlLines);
+}
+
+function buildOrderList(items) {
+  const lowStockItems = Array.isArray(items) ? items : [];
+
+  if (lowStockItems.length === 0) {
+    return formatBilingualSections(
+      ["Suggested Supplier Order", "", "No urgent items to buy."],
+      ["വാങ്ങേണ്ട സാധനങ്ങൾ", "", "ഉടന് വാങ്ങേണ്ടതായ സാധനങ്ങളില്ല."]
+    );
+  }
+
+  const enLines = ["Suggested Supplier Order"];
+  const mlLines = ["വാങ്ങേണ്ട സാധനങ്ങൾ"];
+
+  for (const item of lowStockItems) {
+    const minStock = Number(item.min_stock || item.minStock || 0);
+    const quantity = Number(item.quantity || 0);
+    const orderQty = Math.max(1, minStock * 2 - quantity);
+    enLines.push(`- ${item.name}: buy ${orderQty}`);
+    mlLines.push(`- ${item.name}: ${orderQty} വാങ്ങുക`);
+  }
+
+  return formatBilingualSections(enLines, mlLines);
 }
 
 function looksLikeProductQuery(message) {
@@ -49,15 +151,26 @@ function looksLikeProductQuery(message) {
 }
 
 function buildProductSuggestionMessage(input, suggestion) {
-  return [
-    "I could not find a quantity, but this looks like a product.",
-    "",
-    "Possible match:",
-    `- ${input} \u2192 ${suggestion}`,
-    "",
-    `Try sending:`,
-    `"1 ${suggestion} sold"`,
-  ].join("\n");
+  return formatBilingualSections(
+    [
+      "I could not find a quantity, but this looks like a product.",
+      "",
+      "Possible match:",
+      `- ${input} → ${suggestion}`,
+      "",
+      "Try sending:",
+      `"1 ${suggestion} sold"`,
+    ],
+    [
+      "അളവ് കണ്ടെത്താനായില്ല, പക്ഷേ ഇത് ഒരു സാധനം പോലെ തോന്നുന്നു.",
+      "",
+      "സാധ്യതയുള്ള സാധനം:",
+      `- ${input} → ${suggestion}`,
+      "",
+      "ഇങ്ങനെ അയക്കുക:",
+      `"1 ${suggestion} sold"`,
+    ]
+  );
 }
 
 function getBillItems(results) {
@@ -141,6 +254,15 @@ async function handleTextMessage(from, text) {
       return sendWhatsApp(from, HELP_TEXT);
     }
 
+    if (lowerMessage === "help") {
+      return sendWhatsApp(from, HELP_TEXT);
+    }
+
+    if (isUndoCommand(message)) {
+      const undoResult = await undoLastSale();
+      return sendWhatsApp(from, buildUndoMessage(undoResult));
+    }
+
     if (message === "?" || lowerMessage.includes("summary")) {
       return handleSummaryMessage(from);
     }
@@ -153,6 +275,11 @@ async function handleTextMessage(from, text) {
     if (lowerMessage.includes("stock")) {
       const stockItems = await getAllStock();
       return sendWhatsApp(from, buildStockList(stockItems));
+    }
+
+    if (lowerMessage.includes("order")) {
+      const lowStockItems = await getLowStockItems();
+      return sendWhatsApp(from, buildOrderList(lowStockItems));
     }
 
     const parsed = await parseSalesFromTranscript(message);
@@ -173,7 +300,13 @@ async function handleTextMessage(from, text) {
     const results = await updateStock(parsed.items);
 
     if (!Array.isArray(results) || results.length === 0) {
-      return sendWhatsApp(from, "I found the sale, but couldn't update stock right now.");
+      return sendWhatsApp(
+        from,
+        formatBilingual(
+          "I found the sale, but couldn't update stock right now.",
+          "വിൽപ്പന കണ്ടെത്തി, പക്ഷേ ഇപ്പോള്‍ സ്റ്റോക്ക് അപ്ഡേറ്റ് ചെയ്യാനായില്ല."
+        )
+      );
     }
 
     const unknownNames = results
@@ -182,11 +315,19 @@ async function handleTextMessage(from, text) {
     const suggestions = unknownNames.length > 0 ? await suggestProductMatches(unknownNames) : [];
 
     const reply = await sendWhatsApp(from, buildConfirmationMessage(results, suggestions));
-    await sendBillImageIfPossible(from, results);
+    if (!reply?.error) {
+      await sendBillImageIfPossible(from, results);
+    }
     return reply;
   } catch (error) {
     console.error("[text] Text message handling failed:", error.message);
-    return sendWhatsApp(from, "Sorry, I couldn't process that message. Send ? for summary.");
+    return sendWhatsApp(
+      from,
+      formatBilingual(
+        "Sorry, I couldn't process that message. Send ? for summary.",
+        "ക്ഷമിക്കണം, ആ മെസേജ് പ്രോസസ് ചെയ്യാനായില്ല. സംഗ്രഹത്തിന് ? അയക്കൂ."
+      )
+    );
   }
 }
 

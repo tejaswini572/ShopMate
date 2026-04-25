@@ -7,6 +7,8 @@
     "start": "node index.js",
     "test:local": "node scripts/test-local-flow.js",
     "test:suggestions": "node scripts/test-suggestions.js",
+    "test:undo": "node scripts/test-undo.js",
+    "test:whatsapp-auth": "node scripts/test-whatsapp-auth.js",
     "test:whatsapp": "node scripts/test-whatsapp.js",
     "reset:demo": "node scripts/reset-demo.js"
   },

@@ -292,6 +292,25 @@ async function findProductByName(name) {
   return partialRows[0];
 }
 
+async function findProductById(id) {
+  if (!supabase || !id) {
+    return null;
+  }
+
+  const { data, error } = await supabase
+    .from("stock")
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (error) {
+    console.error("[supabase] findProductById failed:", error.message);
+    return null;
+  }
+
+  return data || null;
+}
+
 async function updateStock(items) {
   if (!supabase) {
     return missingEnvResult([]);
@@ -302,6 +321,8 @@ async function updateStock(items) {
   }
 
   const results = [];
+  const batchId = `sale_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  console.log("Created sale batch:", batchId);
 
   for (const item of items) {
     const name = String(item?.name || "").trim();
@@ -353,6 +374,9 @@ async function updateStock(items) {
       const { error: salesLogError } = await supabase
         .from("sales_log")
         .insert({
+          batch_id: batchId,
+          undone: false,
+          stock_id: product.id,
           product_name: product.name,
           qty_sold: soldQty,
           sell_price: product.sell_price,
@@ -366,6 +390,7 @@ async function updateStock(items) {
     results.push({
       name: product.name,
       sold: soldQty,
+      batchId,
       requestedQty,
       oldQty,
       newQty,
@@ -375,6 +400,120 @@ async function updateStock(items) {
   }
 
   return results;
+}
+
+async function undoLastSale() {
+  if (!supabase) {
+    return missingEnvResult({ ok: false, message: "No sale to undo." });
+  }
+
+  try {
+    console.log("Undo checking recent sale batches...");
+
+    const { data: recentRows, error: latestError } = await supabase
+      .from("sales_log")
+      .select("*")
+      .not("batch_id", "is", null)
+      .order("sold_at", { ascending: false })
+      .limit(50);
+
+    if (latestError) {
+      console.error("[supabase] undoLastSale latest batch lookup failed:", latestError.message);
+      return { ok: false, message: "No sale to undo." };
+    }
+
+    const latestRow = (Array.isArray(recentRows) ? recentRows : []).find((row) => row?.undone !== true);
+    const batchId = latestRow?.batch_id;
+    if (!batchId) {
+      return { ok: false, message: "No sale to undo." };
+    }
+    console.log("Undo selected batch:", batchId);
+
+    const { data: salesRows, error: rowsError } = await supabase
+      .from("sales_log")
+      .select("*")
+      .eq("batch_id", batchId)
+      .order("sold_at", { ascending: true });
+
+    if (rowsError) {
+      console.error("[supabase] undoLastSale batch rows lookup failed:", rowsError.message);
+      return { ok: false, message: "No sale to undo." };
+    }
+
+    const rows = (Array.isArray(salesRows) ? salesRows : []).filter((row) => row?.undone !== true);
+    console.log("Undo rows found:", rows.length);
+    if (rows.length === 0) {
+      return { ok: false, message: "No sale to undo." };
+    }
+
+    const restored = [];
+
+    for (const row of rows) {
+      const qtySold = Number(row.qty_sold || 0);
+      let product = await findProductById(row.stock_id);
+
+      if (!product) {
+        product = await findProductByName(row.product_name);
+      }
+
+      if (!product) {
+        restored.push({
+          name: row.product_name || "Unknown",
+          restored: qtySold,
+          error: "product not found",
+        });
+        continue;
+      }
+
+      const currentQty = Number(product.quantity || 0);
+      const newQty = currentQty + qtySold;
+
+      const { error: updateError } = await supabase
+        .from("stock")
+        .update({
+          quantity: newQty,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", product.id);
+
+      if (updateError) {
+        console.error(`[supabase] undoLastSale stock restore failed for ${product.name}:`, updateError.message);
+        restored.push({
+          name: product.name,
+          restored: qtySold,
+          error: "restore failed",
+        });
+        continue;
+      }
+
+      restored.push({
+        name: product.name,
+        restored: qtySold,
+        newQty,
+      });
+    }
+
+    const { error: markError } = await supabase
+      .from("sales_log")
+      .update({
+        undone: true,
+        undone_at: new Date().toISOString(),
+      })
+      .eq("batch_id", batchId);
+
+    if (markError) {
+      console.error("[supabase] undoLastSale mark undone failed:", markError.message);
+    }
+
+    return {
+      ok: true,
+      batchId,
+      restored,
+    };
+  } catch (error) {
+    console.error("[supabase] undoLastSale failed:", error.message);
+    return { ok: false, message: "No sale to undo." };
+  }
 }
 
 async function getLowStockItems() {
@@ -411,6 +550,7 @@ async function getTodaySalesSummary() {
   const { data, error } = await supabase
     .from("sales_log")
     .select("product_name, qty_sold, sell_price, sold_at")
+    .or("undone.is.null,undone.eq.false")
     .gte("sold_at", start)
     .lt("sold_at", end)
     .order("sold_at", { ascending: false });
@@ -510,6 +650,7 @@ async function getStockSummary() {
 module.exports = {
   getAllStock,
   findProductByName,
+  undoLastSale,
   suggestProductMatches,
   updateStock,
   getLowStockItems,

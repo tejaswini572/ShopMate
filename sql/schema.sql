@@ -11,6 +11,10 @@ create table if not exists stock (
 
 create table if not exists sales_log (
   id uuid primary key default gen_random_uuid(),
+  batch_id text,
+  undone boolean default false,
+  undone_at timestamp,
+  stock_id uuid,
   product_name text,
   qty_sold numeric,
   sell_price numeric default 0,
@@ -19,3 +23,5 @@ create table if not exists sales_log (
 
 create index if not exists stock_name_idx on stock (name);
 create index if not exists sales_log_sold_at_idx on sales_log (sold_at);
+create index if not exists idx_sales_log_batch_id on sales_log (batch_id);
+create index if not exists idx_sales_log_undone on sales_log (undone);

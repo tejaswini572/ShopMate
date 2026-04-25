@@ -21,6 +21,25 @@ function isMockMode() {
   return process.env.WHATSAPP_MOCK === "true";
 }
 
+function logWhatsAppApiError(prefix, error) {
+  const status = error.response?.status;
+  const details = error.response?.data || error.message;
+  const code = details?.error?.code;
+
+  console.error(prefix, status ? `Status: ${status}` : "");
+  console.error(details);
+
+  if (status === 401 || code === 190) {
+    console.error("[whatsapp] META_ACCESS_TOKEN looks invalid or expired. Generate a fresh WhatsApp access token and update .env.");
+  }
+
+  return {
+    error: true,
+    status: status || null,
+    details,
+  };
+}
+
 async function sendWhatsApp(to, body) {
   if (isMockMode()) {
     console.log(`[WHATSAPP MOCK] To: ${to}`);
@@ -56,15 +75,7 @@ async function sendWhatsApp(to, body) {
 
     return response.data;
   } catch (error) {
-    const status = error.response?.status;
-    const details = error.response?.data || error.message;
-    console.error("[whatsapp] Failed to send WhatsApp message.", status ? `Status: ${status}` : "");
-    console.error(details);
-    return {
-      error: true,
-      status: status || null,
-      details,
-    };
+    return logWhatsAppApiError("[whatsapp] Failed to send WhatsApp message.", error);
   }
 }
 
@@ -106,15 +117,7 @@ async function uploadWhatsAppMedia(filePath, mimeType) {
 
     return response.data;
   } catch (error) {
-    const status = error.response?.status;
-    const details = error.response?.data || error.message;
-    console.error("[whatsapp] Failed to upload WhatsApp media.", status ? `Status: ${status}` : "");
-    console.error(details);
-    return {
-      error: true,
-      status: status || null,
-      details,
-    };
+    return logWhatsAppApiError("[whatsapp] Failed to upload WhatsApp media.", error);
   }
 }
 
@@ -158,15 +161,32 @@ async function sendWhatsAppImage(to, mediaId, caption) {
 
     return response.data;
   } catch (error) {
-    const status = error.response?.status;
-    const details = error.response?.data || error.message;
-    console.error("[whatsapp] Failed to send WhatsApp image.", status ? `Status: ${status}` : "");
-    console.error(details);
-    return {
-      error: true,
-      status: status || null,
-      details,
-    };
+    return logWhatsAppApiError("[whatsapp] Failed to send WhatsApp image.", error);
+  }
+}
+
+async function verifyWhatsAppAuth() {
+  if (isMockMode()) {
+    return { mocked: true };
+  }
+
+  const config = getWhatsAppConfig();
+  if (!config) {
+    return { error: true, message: "Missing META_ACCESS_TOKEN or META_PHONE_NUMBER_ID" };
+  }
+
+  const url = `https://graph.facebook.com/v18.0/${config.phoneNumberId}?fields=id,display_phone_number`;
+
+  try {
+    const response = await axios.get(url, {
+      headers: {
+        Authorization: `Bearer ${config.accessToken}`,
+      },
+    });
+
+    return response.data;
+  } catch (error) {
+    return logWhatsAppApiError("[whatsapp] WhatsApp auth verification failed.", error);
   }
 }
 
@@ -174,4 +194,5 @@ module.exports = {
   sendWhatsApp,
   uploadWhatsAppMedia,
   sendWhatsAppImage,
+  verifyWhatsAppAuth,
 };
