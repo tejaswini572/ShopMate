@@ -1,8 +1,8 @@
-# ShopMate MVP
+# ShopMate — WhatsApp Kirana Stock Assistant
 
-ShopMate is a WhatsApp-only kirana stock assistant.
+ShopMate is a WhatsApp-only stock assistant for kirana stores.
 
-## MVP Scope
+## MVP Features
 
 - WhatsApp receives voice/text sales update
 - OpenAI extracts product and quantity
@@ -11,39 +11,109 @@ ShopMate is a WhatsApp-only kirana stock assistant.
 - Low-stock warning
 - Summary command
 
-## Project Structure
+## Architecture
 
-- `index.js` - application entry point
-- `services/openai.js` - OpenAI integration placeholder
-- `services/whatsapp.js` - WhatsApp integration placeholder
-- `services/supabase.js` - Supabase integration placeholder
-- `services/metaMedia.js` - Meta media integration placeholder
-- `handlers/voice.js` - voice message handler placeholder
-- `handlers/text.js` - text message handler placeholder
-- `handlers/summary.js` - summary command handler placeholder
-- `sql/schema.sql` - database schema placeholder
-- `sql/seed.sql` - seed data placeholder
-- `scripts/test-local-flow.js` - local scaffold check
-- `scripts/test-whatsapp.js` - WhatsApp scaffold check
-- `scripts/reset-demo.js` - demo reset placeholder
+```text
+WhatsApp → Express Webhook → OpenAI → Supabase → WhatsApp Reply
+```
 
-## Setup
+## Team Split
 
-```bash
+- Person A: AI + webhook
+- Person B: database + WhatsApp sender
+- Person C: integration + demo
+
+## Windows Setup
+
+```powershell
 npm install
-cp .env.example .env
-```
-
-Fill `.env` with local demo credentials when integrations are implemented.
-
-## Scripts
-
-```bash
-npm run start
+Copy-Item .env.example .env
 npm run dev
-npm run test:local
-npm run test:whatsapp
-npm run reset:demo
 ```
 
-Business logic is intentionally not implemented yet.
+## Supabase Setup
+
+- Create Supabase project
+- Run `sql/schema.sql`
+- Run `sql/seed.sql`
+- Copy `SUPABASE_URL` and `SUPABASE_KEY` into `.env`
+
+## Meta WhatsApp Setup
+
+- Create Meta Developer app
+- Add WhatsApp product
+- Copy access token
+- Copy phone number ID
+- Set webhook callback URL:
+
+```text
+https://YOUR_NGROK_URL/webhook
+```
+
+- Verify token:
+
+```text
+shopmate123
+```
+
+## ngrok + Meta Webhook Setup On Windows
+
+Start the server in PowerShell:
+
+```powershell
+npm run dev
+```
+
+Open another PowerShell window and start ngrok:
+
+```powershell
+ngrok http 3000
+```
+
+Copy the HTTPS forwarding URL.
+
+In Meta Developer Dashboard:
+
+- Go to WhatsApp configuration
+- Callback URL:
+
+```text
+https://YOUR_NGROK_URL/webhook
+```
+
+- Verify token: same as `WEBHOOK_VERIFY_TOKEN` in `.env`
+- Subscribe to `messages` webhook field
+
+Important: if ngrok restarts, the URL changes. Update the Meta webhook URL again.
+
+## Local Test
+
+```powershell
+npm run test:local
+```
+
+## Demo Flow
+
+- Send text: `3 soap, 5 Pepsi sold`
+- Send voice note with same sale
+- Send: `?`
+- See summary
+
+## Windows Troubleshooting
+
+- Use `curl.exe` instead of `curl`
+- Use `Copy-Item` instead of `cp`
+- Use `New-Item` instead of `touch`
+- If PowerShell blocks scripts, run:
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+```
+
+## General Troubleshooting
+
+- OpenAI mock mode still on
+- WhatsApp mock mode still on
+- Supabase env missing
+- ngrok URL changed
+- webhook verification failed
