@@ -402,6 +402,7 @@ async function getTodaySalesSummary() {
       items: [],
       totalQtySold: 0,
       estimatedRevenue: 0,
+      estimatedProfit: 0,
     });
   }
 
@@ -420,38 +421,50 @@ async function getTodaySalesSummary() {
       items: [],
       totalQtySold: 0,
       estimatedRevenue: 0,
+      estimatedProfit: 0,
     };
   }
+
+  const stockItems = await getAllStock();
+  const productCatalog = Array.isArray(stockItems) && stockItems.length > 0 ? stockItems : DEMO_PRODUCTS;
+  const productMap = new Map(productCatalog.map((item) => [normalizeName(item.name), item]));
 
   const grouped = new Map();
   let totalQtySold = 0;
   let estimatedRevenue = 0;
+  let estimatedProfit = 0;
 
   for (const row of data || []) {
     const key = row.product_name || "Unknown";
     const qty = Number(row.qty_sold || 0);
     const price = Number(row.sell_price || 0);
+    const product = productMap.get(normalizeName(key));
+    const buyPrice = Number(product?.buy_price || 0);
 
     totalQtySold += qty;
     estimatedRevenue += qty * price;
+    estimatedProfit += qty * (price - buyPrice);
 
     if (!grouped.has(key)) {
       grouped.set(key, {
         name: key,
         qtySold: 0,
         revenue: 0,
+        profit: 0,
       });
     }
 
     const item = grouped.get(key);
     item.qtySold += qty;
     item.revenue += qty * price;
+    item.profit += qty * (price - buyPrice);
   }
 
   return {
     items: Array.from(grouped.values()).sort((a, b) => a.name.localeCompare(b.name)),
     totalQtySold,
     estimatedRevenue,
+    estimatedProfit,
   };
 }
 

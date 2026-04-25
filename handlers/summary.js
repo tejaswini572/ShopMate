@@ -2,24 +2,33 @@ const { getTodaySalesSummary, getLowStockItems } = require("../services/supabase
 const { sendWhatsApp } = require("../services/whatsapp");
 
 function formatCurrency(value) {
-  return `₹${Number(value || 0).toFixed(2)}`;
+  return `\u20B9${Number(value || 0).toFixed(2)}`;
 }
 
 function buildSalesSection(summary) {
   const items = Array.isArray(summary?.items) ? summary.items : [];
 
   if (items.length === 0) {
-    return ["Sales:", "No sales logged yet today.", "", `Estimated revenue: ${formatCurrency(0)}`];
+    return [
+      "Sales:",
+      "No sales logged yet today.",
+      "",
+      "Total items sold: 0",
+      `Estimated revenue: ${formatCurrency(0)}`,
+      `Estimated profit: ${formatCurrency(0)}`,
+    ];
   }
 
   const lines = ["Sales:"];
 
   for (const item of items) {
-    lines.push(`· ${item.name}: ${item.qtySold} sold`);
+    lines.push(`\u00B7 ${item.name}: ${item.qtySold} sold`);
   }
 
   lines.push("");
+  lines.push(`Total items sold: ${Number(summary?.totalQtySold || 0)}`);
   lines.push(`Estimated revenue: ${formatCurrency(summary?.estimatedRevenue)}`);
+  lines.push(`Estimated profit: ${formatCurrency(summary?.estimatedProfit)}`);
 
   return lines;
 }
@@ -29,12 +38,12 @@ function buildLowStockSection(lowStockItems) {
   const lines = ["Low stock:"];
 
   if (items.length === 0) {
-    lines.push("✅ No low-stock items.");
+    lines.push("\u2705 No low-stock items.");
     return lines;
   }
 
   for (const item of items) {
-    lines.push(`· ${item.name}: ${item.quantity} left`);
+    lines.push(`\u00B7 ${item.name}: ${item.quantity} left`);
   }
 
   return lines;
@@ -62,7 +71,7 @@ async function handleSummaryMessage(from) {
   } catch (error) {
     console.error("[summary] Failed to send summary:", error.message);
     const fallbackMessage = buildSummaryMessage(
-      { items: [], estimatedRevenue: 0, totalQtySold: 0 },
+      { items: [], estimatedRevenue: 0, estimatedProfit: 0, totalQtySold: 0 },
       []
     );
     return sendWhatsApp(from, fallbackMessage);
