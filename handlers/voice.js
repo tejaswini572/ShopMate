@@ -4,8 +4,31 @@ const path = require("path");
 const { downloadWhatsAppMedia } = require("../services/metaMedia");
 const { transcribeAudioFile, parseSalesFromTranscript } = require("../services/openai");
 const { updateStock } = require("../services/supabase");
-const { sendWhatsApp } = require("../services/whatsapp");
+const { generateBillImage } = require("../services/billImage");
+const { sendWhatsApp, uploadWhatsAppMedia, sendWhatsAppImage } = require("../services/whatsapp");
 const { buildConfirmationMessage } = require("./salesReply");
+
+function getBillItems(results) {
+  return (Array.isArray(results) ? results : [])
+    .filter((item) => !item.error && Number(item?.sold || 0) > 0)
+    .map((item) => ({
+      name: item.name,
+      sold: Number(item.sold || 0),
+      sellPrice: Number(item.sellPrice || 0),
+      newQty: Number(item.newQty || 0),
+    }));
+}
+
+function getBillTotal(items) {
+  return items.reduce((sum, item) => {
+    const sellPrice = Number(item.sellPrice || 0);
+    if (sellPrice <= 0) {
+      return sum;
+    }
+
+    return sum + Number(item.sold || 0) * sellPrice;
+  }, 0);
+}
 
 async function removeFileIfPossible(filePath) {
   if (!filePath) {
@@ -18,6 +41,42 @@ async function removeFileIfPossible(filePath) {
     if (error.code !== "ENOENT") {
       console.warn("[voice] Failed to clean up temporary audio file:", error.message);
     }
+  }
+}
+
+async function sendBillImageIfPossible(to, results) {
+  const billItems = getBillItems(results);
+
+  if (billItems.length === 0) {
+    return;
+  }
+
+  const total = getBillTotal(billItems);
+  let filePath;
+
+  try {
+    filePath = await generateBillImage({
+      customerPhone: to,
+      items: billItems,
+      total,
+    });
+
+    const uploadResult = await uploadWhatsAppMedia(filePath, "image/png");
+
+    if (!uploadResult || uploadResult.error || !uploadResult.id) {
+      console.error("[voice] Failed to upload bill image to WhatsApp.");
+      return;
+    }
+
+    const imageResult = await sendWhatsAppImage(to, uploadResult.id, "ShopMate Bill");
+
+    if (imageResult?.error) {
+      console.error("[voice] Failed to send bill image to WhatsApp.");
+    }
+  } catch (error) {
+    console.error("[voice] Failed to generate or send bill image:", error.message);
+  } finally {
+    await removeFileIfPossible(filePath);
   }
 }
 
@@ -58,6 +117,7 @@ async function handleVoiceMessage(from, mediaId) {
     }
 
     await sendWhatsApp(from, buildConfirmationMessage(results));
+    await sendBillImageIfPossible(from, results);
   } catch (error) {
     console.error("[voice] Voice message handling failed:", error.message);
 

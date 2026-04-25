@@ -1,6 +1,8 @@
+const fs = require("fs");
 const { parseSalesFromTranscript } = require("../services/openai");
 const { getAllStock, getLowStockItems, updateStock } = require("../services/supabase");
-const { sendWhatsApp } = require("../services/whatsapp");
+const { generateBillImage } = require("../services/billImage");
+const { sendWhatsApp, uploadWhatsAppMedia, sendWhatsAppImage } = require("../services/whatsapp");
 const { handleSummaryMessage } = require("./summary");
 const { buildConfirmationMessage } = require("./salesReply");
 
@@ -34,6 +36,78 @@ function buildLowStockList(items) {
     "\u26A0\uFE0F Low Stock",
     ...lowStockItems.map((item) => `\u00B7 ${item.name}: ${item.quantity} left`),
   ].join("\n");
+}
+
+function getBillItems(results) {
+  return (Array.isArray(results) ? results : [])
+    .filter((item) => !item.error && Number(item?.sold || 0) > 0)
+    .map((item) => ({
+      name: item.name,
+      sold: Number(item.sold || 0),
+      sellPrice: Number(item.sellPrice || 0),
+      newQty: Number(item.newQty || 0),
+    }));
+}
+
+function getBillTotal(items) {
+  return items.reduce((sum, item) => {
+    const sellPrice = Number(item.sellPrice || 0);
+    if (sellPrice <= 0) {
+      return sum;
+    }
+
+    return sum + Number(item.sold || 0) * sellPrice;
+  }, 0);
+}
+
+async function removeFileIfPossible(filePath) {
+  if (!filePath) {
+    return;
+  }
+
+  try {
+    await fs.promises.unlink(filePath);
+  } catch (error) {
+    if (error.code !== "ENOENT") {
+      console.warn("[text] Failed to clean up temporary bill image:", error.message);
+    }
+  }
+}
+
+async function sendBillImageIfPossible(to, results) {
+  const billItems = getBillItems(results);
+
+  if (billItems.length === 0) {
+    return;
+  }
+
+  const total = getBillTotal(billItems);
+  let filePath;
+
+  try {
+    filePath = await generateBillImage({
+      customerPhone: to,
+      items: billItems,
+      total,
+    });
+
+    const uploadResult = await uploadWhatsAppMedia(filePath, "image/png");
+
+    if (!uploadResult || uploadResult.error || !uploadResult.id) {
+      console.error("[text] Failed to upload bill image to WhatsApp.");
+      return;
+    }
+
+    const imageResult = await sendWhatsAppImage(to, uploadResult.id, "ShopMate Bill");
+
+    if (imageResult?.error) {
+      console.error("[text] Failed to send bill image to WhatsApp.");
+    }
+  } catch (error) {
+    console.error("[text] Failed to generate or send bill image:", error.message);
+  } finally {
+    await removeFileIfPossible(filePath);
+  }
 }
 
 async function handleTextMessage(from, text) {
@@ -71,7 +145,9 @@ async function handleTextMessage(from, text) {
       return sendWhatsApp(from, "I found the sale, but couldn't update stock right now.");
     }
 
-    return sendWhatsApp(from, buildConfirmationMessage(results));
+    const reply = await sendWhatsApp(from, buildConfirmationMessage(results));
+    await sendBillImageIfPossible(from, results);
+    return reply;
   } catch (error) {
     console.error("[text] Text message handling failed:", error.message);
     return sendWhatsApp(from, "Sorry, I couldn't process that message. Send ? for summary.");
